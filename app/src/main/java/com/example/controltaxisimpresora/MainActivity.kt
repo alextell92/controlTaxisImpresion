@@ -61,6 +61,9 @@ class MainActivity : AppCompatActivity() {
         cookieManager.setAcceptCookie(true)
         cookieManager.setAcceptThirdPartyCookies(myWebView, true)
 
+        myWebView.clearCache(true)
+        myWebView.clearHistory()
+
         // 4. Cargar tu URL
         // ¡¡¡ REEMPLAZA ESTO CON TU URL REAL DE FIREBASE !!!
         myWebView.loadUrl("https://taxis-control-f17c1.web.app")
@@ -88,10 +91,35 @@ class MainActivity : AppCompatActivity() {
         val defaultUserAgent = settings.userAgentString
         settings.userAgentString = defaultUserAgent.replace("; wv", "")
 
-        myWebView.webViewClient = WebViewClient()
+        // REEMPLAZA LA LÍNEA 90 (myWebView.webViewClient = WebViewClient()) POR ESTO:
+
+        myWebView.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(view: WebView?, request: android.webkit.WebResourceRequest?): Boolean {
+                val url = request?.url.toString()
+
+                // 1. Si es tu página web normal, deja que cargue
+                if (url != null && (url.startsWith("http://") || url.startsWith("https://"))) {
+                    return false
+                }
+
+                // 2. Si es un protocolo externo (mailto, tel, rawbt, whatsapp), ábrelo fuera del WebView
+                try {
+                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                    startActivity(intent)
+                    return true
+                } catch (e: Exception) {
+                    // Si no tiene la app instalada (ej. RawBT), no hacemos nada para que no truene la app
+                    return true
+                }
+            }
+        }
 
         // Manejo de Ventanas Emergentes (Login Google)
         myWebView.webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(consoleMessage: android.webkit.ConsoleMessage?): Boolean {
+                android.util.Log.d("ANGULAR_LOG", "${consoleMessage?.message()} -- From line ${consoleMessage?.lineNumber()} of ${consoleMessage?.sourceId()}")
+                return true
+            }
             override fun onCreateWindow(
                 view: WebView?,
                 isDialog: Boolean,
@@ -141,6 +169,7 @@ class MainActivity : AppCompatActivity() {
         // Angular llama a esta función enviando un string JSON
         @JavascriptInterface
         fun imprimirTicketData(jsonString: String) {
+
             try {
                 runOnUiThread {
                     Toast.makeText(mContext, "🖨️ Imprimiendo Ticket...", Toast.LENGTH_SHORT).show()
@@ -162,6 +191,20 @@ class MainActivity : AppCompatActivity() {
                 val connection = BluetoothPrintersConnections.selectFirstPaired()
 
                 if (connection != null) {
+
+                    try {
+                        // 1. Intentar conectar (con un pequeño reintento interno)
+                        if (!connection.isConnected) {
+                            try {
+                                connection.connect()
+                            } catch (e: Exception) {
+                                // Si falla el primer intento, esperamos medio segundo y reintentamos "despertarla"
+                                Thread.sleep(500)
+                                connection.disconnect() // Limpiamos cualquier rastro previo
+                                connection.connect()
+                            }
+                        }
+
                     // CONFIGURACIÓN PARA IMPRESORA 58mm (MP210)
                     // 203 DPI, 48mm ancho útil, 32 caracteres por línea
                     val printer = EscPosPrinter(connection, 203, 48f, 32)
@@ -171,29 +214,75 @@ class MainActivity : AppCompatActivity() {
                     // <b> = Negrita
                     // <font size='big'> = Letra Doble Altura/Ancho
 
-                    val textoTicket =
-                        "[C]<b>CONTROL BASE TAXIS</b>\n" +
-                                "[C]--------------------------------\n" +
-                                "[L]\n" +
-                                "[L]<b>FECHA:</b> $fecha\n" +
-                                "[L]<b>HORA: </b> $hora\n" +
-                                "[L]<b>UNIDAD:</b> $unidad\n" +
-                                "[L]--------------------------------\n" +
-                                "[L]<b>COBERTURA:</b>\n" +
-                                "[L]$cobertura\n" +
-                                "[L]--------------------------------\n" +
-                                "[R]<font size='big'><b>TOTAL: $$monto</b></font>\n" +
-                                "[L]\n" +
-                                "[C]Cobrado por:\n" +
-                                "[C]$usuario\n" +
-                                "[C]--------------------------------\n" +
-                                "[C]¡Gracias por su pago!\n" +
-                                "\n\n\n" // Espacio para corte
+                        // ... (Tu código de parseo JSON anterior) ...
+                        val fecha = json.optString("fecha", "")
+                        val hora = json.optString("hora", "")
+                        val cobertura = json.optString("cobertura", "")
+                        val usuario = json.optString("usuario", "")
+                        val unidad = json.optString("unidad", "N/A") // Asegúrate de tener esta variable
+
+                        // -----------------------------------------------------------
+                        // 1. TRUCO PARA LA COBERTURA EN DOS RENGLONES
+                        // -----------------------------------------------------------
+                        // Buscamos la palabra " hasta " y la reemplazamos por un Enter (\n) + "hasta "
+                        // Así la impresora bajará el texto automáticamente.
+                        var cobParte1 = cobertura
+                        var cobParte2 = ""
+
+                        // Si la frase contiene " hasta ", la partimos en dos
+                        if (cobertura.contains(" hasta ")) {
+                            val partes = cobertura.split(" hasta ")
+                            cobParte1 = partes[0]             // Ej: "desde 01/ene/2026"
+                            cobParte2 = "hasta " + partes[1]  // Ej: "hasta 31/ene/2026"
+                        }
+
+                        // -----------------------------------------------------------
+                        // 2. DISEÑO DEL TICKET
+                        // -----------------------------------------------------------
+                        val textoTicket =
+                            "[C]<b>CONTROL BASE TAXIS</b>\n" +
+                                    "[C]--------------------------------\n" +
+                                    "[L]\n" +
+                                    "[L]FECHA: <b>$fecha</b>\n" +
+                                    "[L]HORA:  <b>$hora</b>\n" +
+                                    "[L]--------------------------------\n" +
+
+                                    // --- COBERTURA CENTRADA EN DOS LÍNEAS ---
+                                    "[C]COBERTURA:\n" +
+                                    "[C]<b>$cobParte1</b>\n" +
+                                    // Solo imprimimos la segunda línea si existe (para evitar líneas vacías)
+                                    (if (cobParte2.isNotEmpty()) "[C]<b>$cobParte2</b>\n" else "") +
+                                    // ----------------------------------------
+
+                                    "[L]--------------------------------\n" +
+                                    "[L]\n" +
+                                    "[C]<font size='big'>UNIDAD: <b>$unidad</b></font>\n" +
+                                    "[C]<font size='big'>TOTAL: <b>$$monto</b></font>\n" +
+                                    "[L]\n" +
+                                    "[C]Cobrado por:\n" +
+                                    "[C]<b>$usuario</b>\n" +
+                                    "[C]--------------------------------\n" +
+                                    "[C]¡Gracias por su pago!\n" +
+                                    "\n"
 
                     printer.printFormattedText(textoTicket)
 
+// 3. ¡IMPORTANTE! Desconectar manualmente para liberar el socket
+                        // Esto evita que la siguiente impresión encuentre el canal "ocupado"
+                        Thread.sleep(500) // Damos tiempo a que termine de enviar el buffer
+                        connection.disconnect()
                     runOnUiThread {
                         Toast.makeText(mContext, "✅ Listo", Toast.LENGTH_SHORT).show()
+                    }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        // Si algo falla, intentamos desconectar para no dejar el puerto bloqueado
+                        connection.disconnect()
+
+                        runOnUiThread {
+                            // Si después de los reintentos internos falló, avisamos a Angular
+                            myWebView.evaluateJavascript("window.onPrinterError('Error de conexión: ${e.message}');", null)
+                        }
                     }
                 } else {
                     runOnUiThread {
@@ -209,11 +298,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Mantenemos la función vieja por compatibilidad si quieres, o puedes borrarla
-        @JavascriptInterface
-        fun imprimirTicket(base64String: String) {
-            // ... (Lógica de imagen anterior, opcional) ...
-        }
+
     }
 
     // --- PERMISOS DE ANDROID ---
