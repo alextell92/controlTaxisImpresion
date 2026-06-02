@@ -16,7 +16,22 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
-
+    <TextView
+        android:id="@+id/txtVersion"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/v1_0"
+        android:textColor="#80000000"
+        android:textSize="12sp"
+        android:textStyle="bold"
+        android:padding="5dp"
+        android:layout_marginEnd="25dp"
+        android:layout_marginBottom="3dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:alpha="0.4"
+        android:elevation="10dp"
+        />
 
 
 </androidx.constraintlayout.widget.ConstraintLayout>

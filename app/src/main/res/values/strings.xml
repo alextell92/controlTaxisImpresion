@@ -1,3 +1,4 @@
 <resources>
-    <string name="app_name">Control Taxis</string>
+    <string name="app_name" translatable="false">Control Taxis</string>
+    <string name="v1_0" translatable="false">v1.0.1</string>
 </resources>
